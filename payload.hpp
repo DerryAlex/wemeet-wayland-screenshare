@@ -30,11 +30,11 @@ enum class DEType {
 inline DEType get_current_de_type(){
   // get the DE type using envvar "XDG_SESSION_DESKTOP"
   char* xdg_session_desktop = std::getenv("XDG_SESSION_DESKTOP");
-  std::string xdg_session_desktop_str = xdg_session_desktop;
-  std::string xdg_session_desktop_lower = toLowerString(xdg_session_desktop_str);
   if (xdg_session_desktop == nullptr) {
     return DEType::Unknown;
   }
+  std::string xdg_session_desktop_str = xdg_session_desktop;
+  std::string xdg_session_desktop_lower = toLowerString(xdg_session_desktop_str);
   if (std::string(xdg_session_desktop) == "KDE") {
     return DEType::KDE;
   } else if (std::string(xdg_session_desktop) == "gnome") {
