@@ -82,7 +82,13 @@ sudo ninja install
 ```
 默认情况下，`libhook.so`会被安装到`/usr/lib/wemeet`下. 你随后可以相应地自行编写一个启动脚本，或者修改`wemeet-bin`的启动脚本，使得`libhook.so`按如上方式被预加载并钩住`wemeetapp`.
 
+### Flatpak
 
+Flatpak 版腾讯会议已集成本项目，直接从 [Flathub](https://flathub.org/apps/com.tencent.wemeet) 安装即可：
+
+<a href='https://flathub.org/apps/com.tencent.wemeet'>
+    <img width='240' alt='Download on Flathub' src='https://flathub.org/api/badge?locale=zh-Hans'/>
+</a>
 
 ### Arch Only: 使用AUR包 `wemeet-wayland-screenshare-git`
 
