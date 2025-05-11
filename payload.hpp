@@ -14,6 +14,7 @@
 #include <spa/param/video/format-utils.h>
 #include <spa/debug/pod.h>
 #include <spa/utils/dict.h>
+#include <spa/buffer/meta.h>
 
 #include "format.hpp"
 #include "interface.hpp"
@@ -350,14 +351,20 @@ private:
 
     uint8_t params_buffer[1024];
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
-    const struct spa_pod *params[1];
+    const struct spa_pod *params[2];
 
-    params[0] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
+    int n_params = 0;
+    params[n_params++] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
       SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
       SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoCrop),
       SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_region))
     ));
-    pw_stream_update_params(this_ptr->stream.load(), params, 1);
+    params[n_params++] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
+      SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+      SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoTransform),
+      SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_videotransform))
+    ));
+    pw_stream_update_params(this_ptr->stream.load(), params, n_params);
   }
 
   static void on_process(void* data){
@@ -392,23 +399,63 @@ private:
       auto& interface_singleton = InterfaceSingleton::getSingleton();
       auto& framebuffer = interface_singleton.interface_handle.load()->framebuf;
 
-      struct spa_meta_region *mc;
-      int x = 0, y = 0, width = this_ptr->actual_params.width, height = this_ptr->actual_params.height;
-      if ((mc = (struct spa_meta_region *)spa_buffer_find_meta_data(b->buffer, SPA_META_VideoCrop, sizeof(*mc))) && spa_meta_region_is_valid(mc)) {
-        x = mc->region.position.x;
-        y = mc->region.position.y;
-        width = mc->region.size.width;
-        height = mc->region.size.height;
-        if (this_ptr->processed_frame_count % this_ptr->reporting_interval == 0) {
-          fprintf(stderr, "videocrop: offset=(%d,%d) size=(%d,%d)\n", x, y, width, height);
-        }
+      struct spa_meta_region *video_crop;
+      if ((video_crop = (struct spa_meta_region *)spa_buffer_find_meta_data(b->buffer, SPA_META_VideoCrop, sizeof(*video_crop))) && spa_meta_region_is_valid(video_crop)) {
+        framebuffer.crop_x = video_crop->region.position.x;
+        framebuffer.crop_y = video_crop->region.position.y;
+        framebuffer.crop_width = video_crop->region.size.width;
+        framebuffer.crop_height = video_crop->region.size.height;
+      } else {
+        framebuffer.crop_width = framebuffer.crop_height = 0;
       }
 
       framebuffer.update_param(
-        height,
-        width,
+        this_ptr->actual_params.height,
+        this_ptr->actual_params.width,
         this_ptr->actual_params.format
       );
+      
+      struct spa_meta_videotransform *video_transform;
+      if ((video_transform = (struct spa_meta_videotransform *)spa_buffer_find_meta_data(b->buffer, SPA_META_VideoTransform, sizeof(*video_transform)))) {
+        switch (video_transform->transform) {
+        case SPA_META_TRANSFORMATION_None:
+        case SPA_META_TRANSFORMATION_Flipped:
+          framebuffer.rotate = 0;
+          break;
+        case SPA_META_TRANSFORMATION_90:
+        case SPA_META_TRANSFORMATION_Flipped90:
+          framebuffer.rotate = 90;
+          break;
+        case SPA_META_TRANSFORMATION_180:
+        case SPA_META_TRANSFORMATION_Flipped180:
+          framebuffer.rotate = 180;
+          break;
+        case SPA_META_TRANSFORMATION_270:
+        case SPA_META_TRANSFORMATION_Flipped270:
+          framebuffer.rotate = -90;
+          break;
+        default:
+          break;
+        }
+        switch (video_transform->transform) {
+        case SPA_META_TRANSFORMATION_None:
+        case SPA_META_TRANSFORMATION_90:
+        case SPA_META_TRANSFORMATION_180:
+        case SPA_META_TRANSFORMATION_270:
+          framebuffer.flip = 0;
+          break;
+        case SPA_META_TRANSFORMATION_Flipped:
+        case SPA_META_TRANSFORMATION_Flipped90:
+        case SPA_META_TRANSFORMATION_Flipped180:
+        case SPA_META_TRANSFORMATION_Flipped270:
+          framebuffer.flip = 1;
+          break;
+        default:
+          break;
+        }
+      } else {
+        framebuffer.rotate = framebuffer.flip = 0;
+      }
 
       // copy the data from the pw buffer to the frame buffer
       uint8_t* pw_chunk_ptr = reinterpret_cast<uint8_t*>( b->buffer->datas[0].data);
@@ -416,10 +463,10 @@ private:
       uint32_t pw_chunk_offset = b->buffer->datas[0].chunk->offset % b->buffer->datas[0].maxsize;
       pw_chunk_ptr += pw_chunk_offset;
 
-      for (int row_idx = 0; row_idx < height; ++row_idx) {
+      for (int row_idx = 0; row_idx < framebuffer.height; ++row_idx) {
         uint8_t* framebuffer_row_start = framebuffer.data.get() + row_idx * framebuffer.row_byte_stride;
-        uint8_t* pw_chunk_row_start = pw_chunk_ptr + (row_idx + y) * pw_chunk_stride + x * spa_videoformat_bytesize(this_ptr->actual_params.format);
-        memcpy(framebuffer_row_start, pw_chunk_row_start, width * spa_videoformat_bytesize(this_ptr->actual_params.format));
+        uint8_t* pw_chunk_row_start = pw_chunk_ptr + row_idx * pw_chunk_stride ;
+        memcpy(framebuffer_row_start, pw_chunk_row_start, pw_chunk_stride);
       }
     }
 

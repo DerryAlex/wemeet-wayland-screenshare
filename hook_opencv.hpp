@@ -110,6 +110,43 @@ public:
     return func(src, dst, code);
   }
 
+  static inline void cvTranspose(const CvArr* src, CvArr* dst){
+    using FType = void(const CvArr*, CvArr*);
+    auto& singleton = getSingleton();
+    static auto func = (FType*)dlsym(singleton.libopencv_core_handle, "cvTranspose");
+    return func(src, dst);
+  }
+
+  static inline void cvFlip(
+    const CvArr* src, CvArr* dst = nullptr,
+    int flip_mode = 0
+  ){
+    using FType = void(const CvArr*, CvArr*, int);
+    auto& singleton = getSingleton();
+    static auto func = (FType*)dlsym(singleton.libopencv_core_handle, "cvFlip");
+    return func(src, dst, flip_mode);
+  }
+
+  static inline void cvRotate(
+    const CvArr *src, CvArr* dst,
+    int angle_clockwise
+  ) {
+    switch (angle_clockwise) {
+    case 90:
+      cvTranspose(src, dst);
+      cvFlip(dst, dst, 1);
+      break;
+    case 180:
+      cvFlip(src, dst, -1);
+      break;
+    case -90:
+      cvTranspose(src, dst);
+      cvFlip(dst, dst, 0);
+      break;
+    default:
+      break;
+    }
+  }
 
   void* libopencv_core_handle{nullptr};
   void* libopencv_imgproc_handle{nullptr};

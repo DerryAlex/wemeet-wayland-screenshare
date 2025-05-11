@@ -167,6 +167,23 @@ void XShmGetImageHook(XImage& image){
     &framebuffer_cvmat, framebuffer_height, framebuffer_width,
     CV_8UC4, framebuffer.data.get(), framebuffer_row_byte_stride
   );
+  CvMat *framebuffer_cvmat_ptr = &framebuffer_cvmat;
+  if (framebuffer.crop_height && framebuffer.crop_width) {
+    OpencvDLFCNSingleton::cvGetSubRect(framebuffer_cvmat_ptr, framebuffer_cvmat_ptr, {framebuffer.crop_x, framebuffer.crop_y, framebuffer.crop_width, framebuffer.crop_height});
+    framebuffer_width = framebuffer.crop_width;
+    framebuffer_height = framebuffer.crop_height;
+  }
+  if (framebuffer.rotate) {
+    if (framebuffer.rotate != 180) {
+      std::swap(framebuffer_width, framebuffer_height);
+    }
+    CvMat *framebuffer_cvmat_rotated = OpencvDLFCNSingleton::cvCreateMat(framebuffer_height, framebuffer_width, CV_8UC4);
+    OpencvDLFCNSingleton::cvRotate(framebuffer_cvmat_ptr, framebuffer_cvmat_rotated, framebuffer.rotate);
+    framebuffer_cvmat_ptr = framebuffer_cvmat_rotated;
+  }
+  if (framebuffer.flip) {
+    OpencvDLFCNSingleton::cvFlip(framebuffer_cvmat_ptr);
+  }
 
   
   // get the resize parameters
@@ -179,8 +196,12 @@ void XShmGetImageHook(XImage& image){
     cvRect(ximage_width_offset, ximage_height_offset, target_width, target_height)
   );
   OpencvDLFCNSingleton::cvResize(
-    &framebuffer_cvmat, &ximage_cvmat_roi, CV_INTER_LINEAR
+    framebuffer_cvmat_ptr, &ximage_cvmat_roi, CV_INTER_LINEAR
   );
+  
+  if (framebuffer_cvmat_ptr != &framebuffer_cvmat) {
+    OpencvDLFCNSingleton::cvReleaseMat(&framebuffer_cvmat_ptr);
+  }
 
   // do color convert
   // here the code is currently mainly for wlroot WMs
