@@ -15,7 +15,7 @@
 - KDE Wayland
 - GNOME Wayland
 - Hyprland
-- wlroots-based (tested: sway, wayfire, labwc, river)
+- wlroots-based (tested: sway, wayfire, labwc, river, maomao)
 
 下面的图片展示了使用步骤和效果：
 
