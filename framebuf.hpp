@@ -52,4 +52,8 @@ struct FrameBuffer {
   uint32_t row_byte_stride{0};
   SpaVideoFormat_e format{SpaVideoFormat_e::INVALID};
 
+  int crop_x{0}, crop_y{0}, crop_width{0}, crop_height{0};
+  int rotate{0};
+  int flip{0};
+
 };
