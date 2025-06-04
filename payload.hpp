@@ -21,6 +21,9 @@
 
 #include "helpers.hpp"
 
+#define CURSOR_META_SIZE(width, height) \
+	(sizeof(struct spa_meta_cursor) + sizeof(struct spa_meta_bitmap) + width * height * 4)
+
 enum class DEType {
   GNOME,
   KDE,
@@ -75,20 +78,41 @@ enum class XdpScreencastPortalStatus {
 struct XdpScreencastPortal {
 
   using THIS_CLASS = XdpScreencastPortal;
+  
+  struct _XdpPortal {
+    GObject parent_instance;
+  
+    GError *init_error;
+    GDBusConnection *bus;
+  };
 
   XdpScreencastPortal() {
     portal = xdp_portal_new();
-    XdpOutputType output_type = (XdpOutputType)(XdpOutputType::XDP_OUTPUT_MONITOR | XdpOutputType::XDP_OUTPUT_WINDOW);
-    XdpScreencastFlags cast_flags = XdpScreencastFlags::XDP_SCREENCAST_FLAG_NONE;
-    XdpCursorMode cursor_mode = get_current_session_type() == SessionType::Wayland ? 
-                                XDP_CURSOR_MODE_EMBEDDED :
-                                XDP_CURSOR_MODE_HIDDEN;
-    
-    // hyprland cursor mode workaround.
-    // as hyprland does not support XDP_CURSOR_MODE_HIDDEN, we simply use XDP_CURSOR_MODE_EMBEDDED for it
-    if (get_current_de_type() == DEType::Hyprland) {
+
+    uint32_t available_cursor_modes = 0;
+    {
+      GDBusConnection *bus = ((_XdpPortal *)portal)->bus;
+      // code from obs-studio
+      g_autoptr(GError) error = NULL;
+      GDBusProxy *screencast_proxy = g_dbus_proxy_new_sync(bus, G_DBUS_PROXY_FLAGS_NONE, NULL,
+                                                           "org.freedesktop.portal.Desktop",
+                                                           "/org/freedesktop/portal/desktop",
+                                                           "org.freedesktop.portal.ScreenCast", NULL, &error);
+      g_autoptr(GVariant) cached_cursor_modes = g_dbus_proxy_get_cached_property(screencast_proxy, "AvailableCursorModes");
+      if (cached_cursor_modes) {
+        available_cursor_modes = g_variant_get_uint32(cached_cursor_modes);
+      }
+      g_clear_object(&screencast_proxy);
+    }
+    XdpCursorMode cursor_mode = XDP_CURSOR_MODE_HIDDEN;
+    if (available_cursor_modes & XDP_CURSOR_MODE_METADATA) {
+      cursor_mode = XDP_CURSOR_MODE_METADATA;
+    } else if (available_cursor_modes & XDP_CURSOR_MODE_EMBEDDED) {
       cursor_mode = XDP_CURSOR_MODE_EMBEDDED;
     }
+
+    XdpOutputType output_type = (XdpOutputType)(XdpOutputType::XDP_OUTPUT_MONITOR | XdpOutputType::XDP_OUTPUT_WINDOW);
+    XdpScreencastFlags cast_flags = XdpScreencastFlags::XDP_SCREENCAST_FLAG_NONE;
     XdpPersistMode persist_mode = XdpPersistMode::XDP_PERSIST_MODE_NONE;
     xdp_portal_create_screencast_session(
       portal,
@@ -351,7 +375,7 @@ private:
 
     uint8_t params_buffer[1024];
     struct spa_pod_builder b = SPA_POD_BUILDER_INIT(params_buffer, sizeof(params_buffer));
-    const struct spa_pod *params[2];
+    const struct spa_pod *params[3];
 
     int n_params = 0;
     params[n_params++] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
@@ -363,6 +387,11 @@ private:
       SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
       SPA_PARAM_META_type, SPA_POD_Id(SPA_META_VideoTransform),
       SPA_PARAM_META_size, SPA_POD_Int(sizeof(struct spa_meta_videotransform))
+    ));
+    params[n_params++] = (struct spa_pod *)(spa_pod_builder_add_object(&b,
+      SPA_TYPE_OBJECT_ParamMeta, SPA_PARAM_Meta,
+      SPA_PARAM_META_type, SPA_POD_Id(SPA_META_Cursor),
+      SPA_PARAM_META_size, SPA_POD_CHOICE_RANGE_Int(CURSOR_META_SIZE(64, 64), CURSOR_META_SIZE(1, 1), CURSOR_META_SIZE(1024, 1024))
     ));
     pw_stream_update_params(this_ptr->stream.load(), params, n_params);
   }
@@ -467,6 +496,39 @@ private:
         uint8_t* framebuffer_row_start = framebuffer.data.get() + row_idx * framebuffer.row_byte_stride;
         uint8_t* pw_chunk_row_start = pw_chunk_ptr + row_idx * pw_chunk_stride ;
         memcpy(framebuffer_row_start, pw_chunk_row_start, pw_chunk_stride);
+      }
+
+      struct spa_meta_cursor *cursor;
+      if ((cursor = (struct spa_meta_cursor *)spa_buffer_find_meta_data(b->buffer, SPA_META_Cursor, sizeof(*cursor))) && spa_meta_cursor_is_valid(cursor)) {
+        struct spa_meta_bitmap *bitmap = NULL;
+        if (cursor->bitmap_offset) bitmap = SPA_MEMBER(cursor, cursor->bitmap_offset, struct spa_meta_bitmap);
+        if (bitmap && bitmap->size.width > 0 && bitmap->size.height > 0) {
+          uint8_t *bitmap_data = SPA_MEMBER(bitmap, bitmap->offset, uint8_t);
+          int cursor_x = cursor->position.x, cursor_y = cursor->position.y;
+          int cursor_width = bitmap->size.width, cursor_height = bitmap->size.height;
+          int cursor_bitmap_stride = bitmap->stride;
+          if (true) { // TODO
+            for (int row_idx = 0; row_idx < cursor_height; ++row_idx) {
+              int framebuffer_x = cursor_x, framebuffer_y = row_idx + cursor_y;
+              uint8_t* framebuffer_row_start = framebuffer.data.get() + framebuffer_y * framebuffer.row_byte_stride + framebuffer_x * 4;
+              uint8_t* cursor_row_start = bitmap_data + row_idx * cursor_bitmap_stride;
+              for (int column_idx = 0; column_idx < cursor_width; ++column_idx) {
+                // assume alpha information is in the 4th channel, like RGBA
+                uint16_t srcA = cursor_row_start[4 * column_idx + 3];
+                for (int i = 0; i < 3; i++) {
+                  uint16_t src = cursor_row_start[4 * column_idx + i];
+                  uint16_t dst = framebuffer_row_start[4 * column_idx + i];
+                  // alpha blend
+                  dst = (src * srcA + dst * (255 - srcA)) / 255;
+                  framebuffer_row_start[4 * column_idx + i] = dst;
+                }
+                uint16_t dstA = framebuffer_row_start[4 * column_idx + 3];
+                dstA = (srcA * 255 + dstA * (255 - srcA)) / 255;
+                framebuffer_row_start[4 * column_idx + 3] = dstA;
+              }
+            }
+          }
+        }
       }
     }
 
