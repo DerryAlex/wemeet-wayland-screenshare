@@ -108,12 +108,6 @@ struct XdpScreencastPortal {
 
     XdpOutputType output_type = (XdpOutputType)(XdpOutputType::XDP_OUTPUT_MONITOR | XdpOutputType::XDP_OUTPUT_WINDOW);
     XdpScreencastFlags cast_flags = XdpScreencastFlags::XDP_SCREENCAST_FLAG_NONE;
-    
-    // hyprland cursor mode workaround.
-    // as hyprland does not support XDP_CURSOR_MODE_HIDDEN, we simply use XDP_CURSOR_MODE_EMBEDDED for it
-    if (get_current_de_type() == DEType::Hyprland) {
-      cursor_mode = XDP_CURSOR_MODE_EMBEDDED;
-    }
     XdpPersistMode persist_mode = XdpPersistMode::XDP_PERSIST_MODE_NONE;
     xdp_portal_create_screencast_session(
       portal,
